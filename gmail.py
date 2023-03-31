@@ -1,8 +1,10 @@
 from __future__ import print_function
 
 import os.path
+import sys
 import zmq
 
+from enum import Enum
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,6 +16,14 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
 TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
+
+class State(Enum):
+    SENDING = 0
+    RECEIVING = 1
+
+class StateException(Exception):
+    def __init__(self, state):
+        self.state = state
 
 def gmail_main():
     """Shows basic usage of the Gmail API.
@@ -75,30 +85,54 @@ def main():
     port = socket.getsockopt(zmq.LAST_ENDPOINT).decode().rsplit(":", 1)[-1]
     print(port)
 
+    state = State.RECEIVING
+
     while True:
         try:
             # Wait for a request from a client
-            message = socket.recv_multipart()
+            if state == State.RECEIVING:
+                message = socket.recv_multipart()
+                state = State.SENDING
+            else:
+                raise StateException(state)
 
             command = message[0].decode()
             arguments = [arg.decode() for arg in message[1:]]
+
+            print("received command", command, file=sys.stderr)
 
             # Process the request
             if command in COMMAND_MAP:
                 response = COMMAND_MAP[command]()
 
                 # Send the response back to the client
-                socket.send_multipart([b"OK"] + response)
+                if state == State.SENDING:
+                    socket.send_multipart([b"OK"] + response)
+                    state = State.RECEIVING
+                else:
+                    raise StateException(state)
             else:
-                error(socket, b"unknown command")
+                if state == State.SENDING:
+                    error(socket, b"unknown command")
+                    state = State.RECEIVING
+                else:
+                    raise StateException(state)
                 response = nil
 
         except KeyboardInterrupt:
             break
+        except StateException as e:
+            print("Illegal state: ", e.state, file=sys.stderr)
+            exit(1)
         except Exception as e:
             # Handle any errors that occur during processing
             error_response = str(e).encode()
-            error(socket, error_response)
+            if state == State.SENDING:
+                error(socket, error_response)
+                state = State.RECEIVING
+            else:
+                print("Illegal state: ", state, file=sys.stderr)
+                print("While trying to respond with error message: ", error_response, file=sys.stderr)
 
 if __name__ == '__main__':
     main()
