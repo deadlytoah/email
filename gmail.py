@@ -54,6 +54,16 @@ def gmail_main():
         # TODO(developer) - Handle errors from gmail API.
         print(f'An error occurred: {error}')
 
+def error(socket, message):
+    socket.send_multipart([b"ERROR", message])
+
+def list_commands():
+    return list(COMMAND_MAP.keys())
+
+COMMAND_MAP = {
+    "help": list_commands,
+}
+
 def main():
     context = zmq.Context()
 
@@ -74,19 +84,21 @@ def main():
             arguments = [arg.decode() for arg in message[1:]]
 
             # Process the request
-            if command == "error":
-                raise ValueError("Invalid request")
+            if command in COMMAND_MAP:
+                response = COMMAND_MAP[command]()
 
-            response = b"Hello, client!"
+                # Send the response back to the client
+                socket.send_multipart([b"OK"] + response)
+            else:
+                error(socket, b"unknown command")
+                response = nil
 
-            # Send the response back to the client
-            socket.send_multipart([b"OK", response])
         except KeyboardInterrupt:
             break
         except Exception as e:
             # Handle any errors that occur during processing
             error_response = str(e).encode()
-            socket.send_multipart([b"ERROR", error_response])
+            error(socket, error_response)
 
 if __name__ == '__main__':
     main()
