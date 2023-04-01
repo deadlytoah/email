@@ -64,6 +64,9 @@ def gmail_main():
         # TODO(developer) - Handle errors from gmail API.
         print(f'An error occurred: {error}')
 
+def ok(socket, array):
+    socket.send_multipart([b"OK"] + [arg.encode() for arg in array])
+
 def error(socket, message):
     socket.send_multipart([b"ERROR", message])
 
@@ -107,7 +110,7 @@ def main():
 
                 # Send the response back to the client
                 if state == State.SENDING:
-                    socket.send_multipart([b"OK"] + response)
+                    ok(socket, response)
                     state = State.RECEIVING
                 else:
                     raise StateException(state)
@@ -117,7 +120,6 @@ def main():
                     state = State.RECEIVING
                 else:
                     raise StateException(state)
-                response = nil
 
         except KeyboardInterrupt:
             break
