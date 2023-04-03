@@ -21,6 +21,11 @@ EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
 
 gmail = None
 
+class ErrorCode(Enum):
+    UNKNOWN_COMMAND = "ERROR_UNKNOWN_COMMAND"
+    NO_MESSAGES = "ERROR_NO_MESSAGES"
+    UNCATEGORISED = "ERROR_UNCATEGORISED"
+
 class NoMessagesException(Exception):
     def __init__(self):
         super().__init__("no messages")
@@ -83,8 +88,8 @@ class GmailException(Exception):
 def ok(socket, array):
     socket.send_multipart([b"OK"] + [arg.encode() for arg in array])
 
-def error(socket, message):
-    socket.send_multipart([b"ERROR", message])
+def error(socket, code, message):
+    socket.send_multipart([b"ERROR", code.value.encode(), message.encode()])
 
 def list_commands():
     return list(command_map().keys())
@@ -144,7 +149,7 @@ def main():
                     raise StateException(state)
             else:
                 if state == State.SENDING:
-                    error(socket, b"unknown command")
+                    error(socket, ErrorCode.UNKNOWN_COMMAND, "unknown command")
                     state = State.RECEIVING
                 else:
                     raise StateException(state)
@@ -154,11 +159,18 @@ def main():
         except StateException as e:
             print("Illegal state: ", e.state, file=sys.stderr)
             exit(1)
+        except NoMessagesException as e:
+            if state == State.SENDING:
+                error(socket, ErrorCode.NO_MESSAGES, str(e))
+                state = State.RECEIVING
+            else:
+                print("Illegal state: ", state, file=sys.stderr)
+                print("While trying to respond with error message: ", str(e), file=sys.stderr)
         except Exception as e:
             # Handle any errors that occur during processing
-            error_response = str(e).encode()
+            error_response = str(e)
             if state == State.SENDING:
-                error(socket, error_response)
+                error(socket, ErrorCode.UNCATEGORISED, error_response)
                 state = State.RECEIVING
             else:
                 print("Illegal state: ", state, file=sys.stderr)
