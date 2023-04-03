@@ -23,12 +23,7 @@ gmail = None
 
 class ErrorCode(Enum):
     UNKNOWN_COMMAND = "ERROR_UNKNOWN_COMMAND"
-    NO_MESSAGES = "ERROR_NO_MESSAGES"
     UNCATEGORISED = "ERROR_UNCATEGORISED"
-
-class NoMessagesException(Exception):
-    def __init__(self):
-        super().__init__("no messages")
 
 class State(Enum):
     SENDING = 0
@@ -95,11 +90,7 @@ def list_commands():
     return list(command_map().keys())
 
 def check():
-    messages = gmail.check(mailto=EMAIL_ADDRESS)
-    if messages:
-        return messages
-    else:
-        raise NoMessagesException()
+    return gmail.check(mailto=EMAIL_ADDRESS)
 
 def command_map():
     return {
@@ -159,13 +150,6 @@ def main():
         except StateException as e:
             print("Illegal state: ", e.state, file=sys.stderr)
             exit(1)
-        except NoMessagesException as e:
-            if state == State.SENDING:
-                error(socket, ErrorCode.NO_MESSAGES, str(e))
-                state = State.RECEIVING
-            else:
-                print("Illegal state: ", state, file=sys.stderr)
-                print("While trying to respond with error message: ", str(e), file=sys.stderr)
         except Exception as e:
             # Handle any errors that occur during processing
             error_response = str(e)
