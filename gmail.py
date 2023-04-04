@@ -1,15 +1,17 @@
 from __future__ import print_function
 
+import base64
 import os.path
 import sys
 import zmq
 
 from enum import Enum
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request # type: ignore
+from google.oauth2.credentials import Credentials # type: ignore
+from google_auth_oauthlib.flow import InstalledAppFlow # type: ignore
+from googleapiclient.discovery import build # type: ignore
+from googleapiclient.errors import HttpError # type: ignore
+from typing import Any, Dict, List
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -60,25 +62,146 @@ class Gmail:
         except HttpError as error:
             raise GmailException(error)
 
-    def check(self, mailto):
+    def check(self, mailto: str) -> List[Dict[str, str]]:
+        """
+        Searches for messages addressed to the specified email address
+        and returns their decoded content.
+
+        Args:
+            mailto (str): The email address to search for in the "To"
+            field of the messages.
+
+        Returns:
+            List[Dict[str, str]]: A list of dictionaries representing
+            the messages found. "body" key in each dictionary contains
+            the decoded content of the message body.
+
+        Raises:
+            GmailException: If an error occurs while searching for
+            messages in the Gmail API.
+            ProtocolException: If there is an unexpected content in a
+            message payload.
+        """
+        query: str = "to:" + mailto
+        return [decode_mime_message(message) for message in self.query_messages(query)]
+
+    def query_messages(self, query: str) -> List[Dict[str, str]]:
+        """
+        Searches for MIME messages in the Gmail account that match the
+        specified query.
+
+        Args:
+            query (str): The search query to use when searching for
+            messages.
+
+        Returns:
+            List[Dict[str, str]]: A list of dictionaries representing
+            the messages found.  "mime_body" in each dictionary
+            contains the base64-decoded plain text content of the
+            message body.
+
+        Raises:
+            GmailException: If an error occurs while searching for
+            messages in the Gmail API.
+            ProtocolException: If there is an unexpected content in a
+            message payload.
+        """
         try:
-            # Call the Gmail API to search for messages addressed to "mailto"
-            query = "to:" + mailto
-            results = self.service.users().messages().list(userId='me', q=query).execute()
-            messages = results.get('messages', [])
+            results: Dict[str, Any] = self.service.users().messages().list(
+                userId='me', q=query).execute()
+            messages: List[Dict[str, str]] = results.get('messages', [])
             # Retrieve the message details for each matching message
+            response: List[Dict[str, str]] = []
             for message in messages:
-                msg = self.service.users().messages().get(userId='me', id=message['id']).execute()
-                # Process the message as needed
-            return messages
+                msg: Dict[str, Any] = self.service.users().messages().get(userId='me', id=message['id']).execute()
+                payload: Dict[str, Any] = msg['payload']
+                response.append(self.read_message(payload))
+            return response
         except HttpError as error:
-            print("print error", error)
-            print("print str(error)", str(error))
             raise GmailException(error)
+
+    def read_message(self, payload: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Extracts the plain text content of the specified Gmail message
+        payload.
+
+        Args:
+            payload (Dict): A dictionary representing the payload of a
+            Gmail message.
+
+        Returns:
+            Dict[str, str]: A dictionary representing a
+            message. "mime_body" contains the base64-decoded plain
+            text content of the message body.
+
+        Raises:
+            ProtocolException: If there is no plain text MIME part in
+            the message payload, or if the MIME part is empty.
+        """
+        message: Dict[str, str] = {}
+        parts: List[Dict[str, Any]] = payload['parts']
+        for part in parts:
+            body: Dict[str, Any] = part['body']
+            if body['size'] > 0:
+                content_type: str = part['mimeType']
+                if content_type == 'text/plain':
+                    message['mime_body'] = body['data']
+                    break
+        if message.get('mime_body'):
+            return message
+        else:
+            raise ProtocolException('text/plain MIME part is missing or empty')
+
+def base64_string_decode(base64_text: str) -> str:
+    """
+    Decodes a base64 encoded string.
+
+    Args:
+        base64_text (str): The base64 encoded string.
+
+    Returns:
+        str: The decoded string.
+    """
+    return base64.urlsafe_b64decode(base64_text.encode('UTF-8')).decode('UTF-8')
+
+def decode_mime_message(mime_message: Dict[str, str]) -> Dict[str, str]:
+    """
+    Decodes a MIME message and returns its body as a string.
+
+    Args:
+        mime_message (dict): Represents a MIME message, with
+        'mime_body' containing the encoded body.
+
+    Returns:
+        message (dict): A dictionary with a key 'body' that
+        contains the decoded body as a string.
+    """
+    mime_body: str = mime_message['mime_body']
+    message: Dict[str, str] = {'body': base64_string_decode(mime_body)}
+    return message
 
 class GmailException(Exception):
     def __init__(self, inner):
         super().__init__(inner)
+
+class ProtocolException(Exception):
+    """
+    An exception that indicates unexpected data format in Gmail API
+    request or response.
+
+    Attributes:
+        message (str): The error message associated with the
+        exception.
+    """
+    def __init__(self, message: str):
+        """
+        Initializes a new instance of the ProtocolException class.
+
+        Args:
+            message (str): The error message associated with the
+            exception.
+        """
+        super(ProtocolException, self).__init__(message)
 
 def ok(socket, array):
     socket.send_multipart([b"OK"] + [arg.encode() for arg in array])
@@ -90,7 +213,7 @@ def list_commands():
     return list(command_map().keys())
 
 def check():
-    return gmail.check(mailto=EMAIL_ADDRESS)
+    return [message['body'] for message in gmail.check(mailto=EMAIL_ADDRESS)]
 
 def command_map():
     return {
