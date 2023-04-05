@@ -6,12 +6,13 @@ import sys
 import zmq
 
 from enum import Enum
+from google.auth.exceptions import RefreshError # type: ignore
 from google.auth.transport.requests import Request # type: ignore
 from google.oauth2.credentials import Credentials # type: ignore
 from google_auth_oauthlib.flow import InstalledAppFlow # type: ignore
 from googleapiclient.discovery import build # type: ignore
 from googleapiclient.errors import HttpError # type: ignore
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -61,6 +62,29 @@ class Gmail:
             return self
         except HttpError as error:
             raise GmailException(error)
+
+    def next_thread(self, mailto: str) -> List[Dict[str, str]]:
+        """
+        Retrieves all messages in the next thread, addressed to the
+        given email (i.e., "mailto" address).
+
+        Args:
+            mailto: A string specifying the email address to search
+            for in the "to" field of the messages.
+
+        Returns:
+            A list of decoded messages in the next thread. Each
+            dictionary has a single key "body" whose value is a string
+            representing the decoded body of a message.
+
+        Raises:
+            GmailException: If an error occurs while searching for
+            messages in the Gmail API.
+            ProtocolException: If there is an unexpected content in a
+            message payload.
+        """
+        query: str = "to:" + mailto
+        return [decode_mime_message(message) for message in self.query_next_thread(query)]
 
     def check(self, mailto: str) -> List[Dict[str, str]]:
         """
@@ -117,6 +141,48 @@ class Gmail:
                 payload: Dict[str, Any] = msg['payload']
                 response.append(self.read_message(payload))
             return response
+        except HttpError as error:
+            raise GmailException(error)
+
+    def query_next_thread(self, query: str) -> List[Dict[str, str]]:
+        """
+        Searches for MIME messages in the Gmail account that match the
+        specified query.
+
+        Args:
+            query (str): The search query to use when searching for
+            messages.
+
+        Returns:
+            List[Dict[str, str]]: A list of dictionaries representing
+            the messages found.  "mime_body" in each dictionary
+            contains the base64-decoded plain text content of the
+            message body.
+
+        Raises:
+            GmailException: If an error occurs while searching for
+            messages in the Gmail API.
+            ProtocolException: If there is an unexpected content a
+            message payload.
+        """
+        try:
+            results: Dict[str, Any] = self.service.users().threads().list(
+                userId='me', q=query).execute()
+
+            # Get the first thread
+            if 'threads' in results and results['threads']:
+                thread_id: int = results['threads'][0]['id']
+
+                # Get the messages in the thread
+                thread_messages: List[Dict[str, str]] = []
+                thread: Dict[str, Any] = self.service.users().threads().get(userId='me', id=thread_id).execute()
+                messages: List[Dict[str, Any]] = thread.get('messages', [])
+                for message in messages:
+                    payload: Dict[str, Any] = message.get('payload', [])
+                    thread_messages.append(self.read_message(payload))
+                return thread_messages
+            else:
+                raise ProtocolException('No threads key or it has no value.')
         except HttpError as error:
             raise GmailException(error)
 
@@ -215,9 +281,13 @@ def list_commands():
 def check():
     return [message['body'] for message in gmail.check(mailto=EMAIL_ADDRESS)]
 
+def thread():
+    return [message['body'] for message in gmail.next_thread(mailto=EMAIL_ADDRESS)]
+
 def command_map():
     return {
         "check": check,
+        "thread": thread,
         "help": list_commands,
     }
 
