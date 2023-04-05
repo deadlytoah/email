@@ -47,7 +47,12 @@ class Gmail:
         # If there are no (valid) credentials available, let the user log in.
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except RefreshError:
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        CLIENT_SECRETS_FILE, SCOPES)
+                    creds = flow.run_local_server(port=0)
             else:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     CLIENT_SECRETS_FILE, SCOPES)
