@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import base64
 import os.path
+import subprocess
 import sys
 import zmq
 
@@ -309,6 +310,7 @@ def main():
     # Print the port number to stdout
     port = socket.getsockopt(zmq.LAST_ENDPOINT).decode().rsplit(":", 1)[-1]
     print(port)
+    subprocess.call(f'/bin/echo -n {port} | pbcopy', shell=True)
 
     state = State.RECEIVING
 
