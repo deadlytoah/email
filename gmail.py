@@ -1,11 +1,13 @@
 from __future__ import print_function
 
 import base64
+import json
 import os.path
 import subprocess
 import sys
 import zmq
 
+from dataclasses import dataclass
 from enum import Enum
 from google.auth.exceptions import RefreshError # type: ignore
 from google.auth.transport.requests import Request # type: ignore
@@ -13,7 +15,7 @@ from google.oauth2.credentials import Credentials # type: ignore
 from google_auth_oauthlib.flow import InstalledAppFlow # type: ignore
 from googleapiclient.discovery import build # type: ignore
 from googleapiclient.errors import HttpError # type: ignore
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -22,8 +24,6 @@ CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
 TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
 
 EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
-
-gmail = None
 
 class ErrorCode(Enum):
     UNKNOWN_COMMAND = "ERROR_UNKNOWN_COMMAND"
@@ -65,7 +65,6 @@ class Gmail:
         try:
             # Call the Gmail API
             self.service = build('gmail', 'v1', credentials=creds)
-            return self
         except HttpError as error:
             raise GmailException(error)
 
@@ -224,6 +223,8 @@ class Gmail:
         else:
             raise ProtocolException('text/plain MIME part is missing or empty')
 
+gmail: Gmail = Gmail()
+
 def base64_string_decode(base64_text: str) -> str:
     """
     Decodes a base64 encoded string.
@@ -258,7 +259,7 @@ class GmailException(Exception):
 
 class ProtocolException(Exception):
     """
-    An exception that indicates unexpected data format in Gmail API
+    An exception that indicates unexpected data format in the external API
     request or response.
 
     Attributes:
@@ -275,44 +276,172 @@ class ProtocolException(Exception):
         """
         super(ProtocolException, self).__init__(message)
 
+class UnknownCommandException(Exception):
+    """
+    Indicates the given command is invalid.
+    """
+    def __init__(self, command):
+        super(UnknownCommandException, self).__init__(f'unknown command {command}')
+        self.command = command
+
+class Timeout(Enum):
+    DEFAULT = 300
+    LONG = 3000
+
+@dataclass
+class Metadata:
+    name: str
+    description: str
+    timeout: Timeout
+    arguments: str
+    returns: str
+    errors: str
+
+    def to_dictionary(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'description': self.description,
+            'timeout': self.timeout.value,
+            'arguments': self.arguments,
+            'returns': self.returns,
+            'errors': self.errors
+        }
+
 def ok(socket, array):
     socket.send_multipart([b"OK"] + [arg.encode() for arg in array])
 
 def error(socket, code, message):
     socket.send_multipart([b"ERROR", code.value.encode(), message.encode()])
 
-def list_commands():
+def list_commands(arguments: List[str]) -> List[str]:
     return list(command_map().keys())
 
-def check():
+def help_screen(arguments: List[str]) -> List[str]:
+    response: List[str] = []
+    for command, command_info in command_map().items():
+        metadata = command_info.get('metadata')
+        if metadata and isinstance(metadata, Metadata):
+            help_string = f'**{command}**\\\n'
+            help_string += f'{metadata.description}\\\n'
+            if metadata.timeout.value > 300:
+                help_string += 'Can take a long time to run.\\\n'
+            help_string += '\\\n**Arguments**\\\n'
+            help_string += f'{metadata.arguments}\\\n\\\n'
+            help_string += '**Returns**\\\n'
+            help_string += f'{metadata.returns}\\\n\\\n'
+            help_string += '**Errors**\\\n'
+            help_string += metadata.errors
+            response.append(help_string)
+        else:
+            raise RuntimeError(f'metadata missing or invalid for {command}')
+    return response
+
+def metadata(arguments: List[str]) -> List[str]:
+    """
+    Retrieves metadata for specified service functions.
+
+    Args:
+        arguments: A list of names of the service functions to
+        retrieve metadata for.
+
+    Returns:
+        A list of metadata for the specified service functions, as a
+        JSON-encoded string.
+
+    Raises:
+        ValueError: arguments are empty.
+        RuntimeError: metadata is missing.
+    """
+    if len(arguments) > 0:
+        return [json.dumps(__metadata_impl(command).to_dictionary()) for command in arguments]
+    else:
+        raise ValueError("Expected one or more commands as arguments")
+
+def __metadata_impl(function_name: str) -> Metadata:
+    command = command_map().get(function_name)
+    if command:
+        metadata = command.get('metadata')
+        if metadata and isinstance(metadata, Metadata):
+            return metadata
+        else:
+            raise RuntimeError(f'metadata missing for {function_name}')
+    else:
+        raise UnknownCommandException(command)
+
+def check(arguments: List[str]) -> List[str]:
+    global gmail
     return [message['body'] for message in gmail.check(mailto=EMAIL_ADDRESS)]
 
-def thread():
+def thread(arguments: List[str]) -> List[str]:
+    global gmail
     return [message['body'] for message in gmail.next_thread(mailto=EMAIL_ADDRESS)]
 
-def command_map():
+def command_map() -> Dict[str, Dict[str, Union[Callable[[List[str]], List[str]], Metadata]]]:
     return {
-        "check": check,
-        "thread": thread,
-        "help": list_commands,
+        "help": {
+            'handler': help_screen,
+            'metadata': Metadata('help',
+                                 'Describes available service commands.',
+                                 Timeout.DEFAULT,
+                                 'None',
+                                 'A list of strings describing the available service commands.',
+                                 '*RuntimeError* - metadata is missing or invalid.'),
+        },
+        "metadata": {
+            'handler': metadata,
+            'metadata': Metadata('metadata',
+                                 'Describes the given command.',
+                                 Timeout.DEFAULT,
+                                 'A list of commands to describe.',
+                                 'A list of metadata for the commmands in JSON',
+                                 '''*ValueError* - arguments are empty.\\
+                                    *RuntimeError* - metadata is missing.'''),
+        },
+        "check": {
+            'handler': check,
+            'metadata': Metadata('check',
+                                'Retrieves messages in INBOX.',
+                                Timeout.DEFAULT,
+                                'None',
+                                'A list of strings containing the decoded body of the messages.',
+                                '''*GmailException* - If an error occurs while searching for
+                                    messages in the Gmail API.\\
+                                    *ProtocolException* - If there is an unexpected content in a
+                                    message payload.'''),
+        },
+        "thread": {
+            'handler': thread,
+            'metadata': Metadata('thread',
+                                 'Retrieves messages in the first thread.',
+                                 Timeout.DEFAULT,
+                                 'None',
+                                 'A list of decoded messages in the first thread.',
+                                 '''*GmailException* - If an error occurs while searching for
+                                    messages in the Gmail API.\\
+                                    *ProtocolException* - If there is an unexpected content in a
+                                    message payload.'''),
+        },
+        # "send": send,
     }
 
-def main():
+def main() -> None:
     global gmail
-    gmail = Gmail().authenticate()
+    gmail.authenticate()
 
-    context = zmq.Context()
+    context: zmq.Context = zmq.Context()
 
     # Create a socket for the server
-    socket = context.socket(zmq.REP)
+    socket: zmq.Socket = context.socket(zmq.REP)
     socket.bind("tcp://*:0")
 
     # Print the port number to stdout
-    port = socket.getsockopt(zmq.LAST_ENDPOINT).decode().rsplit(":", 1)[-1]
+    port_bytes = socket.getsockopt(zmq.LAST_ENDPOINT)
+    assert(isinstance(port_bytes, bytes))
+    port: str = port_bytes.decode().rsplit(":", 1)[-1]
     print(port)
     subprocess.call(f'/bin/echo -n {port} | pbcopy', shell=True)
 
-    state = State.RECEIVING
+    state: State = State.RECEIVING
 
     while True:
         try:
@@ -329,27 +458,36 @@ def main():
             print("received command", command, file=sys.stderr)
 
             # Process the request
-            if command in command_map():
-                response = command_map()[command]()
+            command_info = command_map().get(command)
+            if command_info:
+                handler = command_info.get('handler')
+                if handler and callable(handler):
+                    response = handler(arguments)
 
-                # Send the response back to the client
-                if state == State.SENDING:
-                    ok(socket, response)
-                    state = State.RECEIVING
+                    # Send the response back to the client
+                    if state == State.SENDING:
+                        ok(socket, response)
+                        state = State.RECEIVING
+                    else:
+                        raise StateException(state)
                 else:
-                    raise StateException(state)
+                    raise RuntimeError(f'handler missing or not valid for {command}')
             else:
-                if state == State.SENDING:
-                    error(socket, ErrorCode.UNKNOWN_COMMAND, "unknown command")
-                    state = State.RECEIVING
-                else:
-                    raise StateException(state)
+                raise UnknownCommandException(f'unknown command {command}')
 
         except KeyboardInterrupt:
             break
         except StateException as e:
             print("Illegal state: ", e.state, file=sys.stderr)
             exit(1)
+        except UnknownCommandException as e:
+            error_response = str(e)
+            if state == State.SENDING:
+                error(socket, ErrorCode.UNKNOWN_COMMAND, "unknown command")
+                state = State.RECEIVING
+            else:
+                print("Illegal state: ", state, file=sys.stderr)
+                print("While trying to respond with error message: ", error_response, file=sys.stderr)
         except Exception as e:
             # Handle any errors that occur during processing
             error_response = str(e)
