@@ -92,6 +92,22 @@ class Gmail:
         except HttpError as error:
             raise GmailException(error)
 
+    def archive(self, thread_id: str) -> None:
+        """
+        Archives the given thread.
+
+        Args:
+            thread_id: The ID of the thread to archive.
+
+        Raises:
+            GmailException: If an error occurs while archiving the thread.
+        """
+        try:
+            self.service.users().threads().modify(
+                userId="me", id=thread_id, body={"removeLabelIds": ["INBOX"]}).execute()
+        except HttpError as error:
+            raise GmailException(error)
+
     def reply(self, thread_id: str, reply_to_message_id: str, mailto: str, subject: str, body: str) -> None:
         """
         Replies to the given thread.
@@ -388,6 +404,15 @@ def reply(arguments: List[str]) -> List[str]:
         raise ValueError('reply requires 5 arguments')
 
 
+def archive(arguments: List[str]) -> List[str]:
+    global gmail
+    if len(arguments) > 0:
+        gmail.archive(thread_id=arguments[0])
+        return []
+    else:
+        raise ValueError('archive requires 1 argument')
+
+
 def main() -> None:
     global gmail
     gmail.authenticate()
@@ -428,6 +453,15 @@ def main() -> None:
                                    *mailto* - Email address of the sender.\\
                                    *subject* - The subject of the email message.\\
                                    *body* - The text of the email message.''',
+                                'None',
+                                '''*GmailException* - If an error occurs while searching for
+                                    messages in the Gmail API.'''))
+    pyservice.register('archive',
+                       archive,
+                       Metadata('archive',
+                                'Archives a thread.',
+                                pyservice.Timeout.LONG,
+                                '*thread_id* - ID of the thread to archive.',
                                 'None',
                                 '''*GmailException* - If an error occurs while searching for
                                     messages in the Gmail API.'''))
