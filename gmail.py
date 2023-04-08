@@ -92,7 +92,7 @@ class Gmail:
         except HttpError as error:
             raise GmailException(error)
 
-    def reply(self, thread_id: str, mailto: str, subject: str, body: str) -> None:
+    def reply(self, thread_id: str, reply_to_message_id: str, mailto: str, subject: str, body: str) -> None:
         """
         Replies to the given thread.
 
@@ -106,7 +106,7 @@ class Gmail:
         """
         try:
             message = self.create_message(
-                thread_id, EMAIL_ADDRESS, mailto, subject, body)
+                thread_id, EMAIL_ADDRESS, mailto, subject, body, reply_to=reply_to_message_id)
             self.service.users().messages().send(userId="me", body=message).execute()
         except HttpError as error:
             raise GmailException(error)
@@ -266,7 +266,7 @@ class Gmail:
             raise ProtocolException(
                 f'Unexpected MIME type {content_type} in message payload.')
 
-    def create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str) -> Dict[str, str]:
+    def create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str, reply_to: Optional[str] = None) -> Dict[str, str]:
         """
         Creates a message for an email.
 
@@ -275,6 +275,8 @@ class Gmail:
             to (str): Email address of the receiver.
             subject (str): The subject of the email message.
             message_text (str): The text of the email message.
+            reply_to (str): The message ID of the original email
+                            message, found in the "Message-ID" header.
 
         Returns:
             Dict[str, str]: A dictionary containing a base64url encoded
@@ -285,6 +287,9 @@ class Gmail:
         message['to'] = to
         message['from'] = sender
         message['subject'] = subject
+        if reply_to is not None:
+            message['In-Reply-To'] = reply_to
+            message['References'] = reply_to
         raw_message: bytes = base64.urlsafe_b64encode(message.as_bytes())
         return {'raw': raw_message.decode(),
                 'threadId': thread_id}
@@ -375,12 +380,12 @@ def thread(arguments: List[str]) -> List[str]:
 
 def reply(arguments: List[str]) -> List[str]:
     global gmail
-    if len(arguments) > 3:
-        gmail.reply(thread_id=arguments[0], mailto=arguments[1],
-                    subject=arguments[2], body=arguments[3])
+    if len(arguments) > 4:
+        gmail.reply(thread_id=arguments[0], reply_to_message_id=arguments[1], mailto=arguments[2],
+                    subject=arguments[3], body=arguments[4])
         return []
     else:
-        raise ValueError('reply requires 4 arguments')
+        raise ValueError('reply requires 5 arguments')
 
 
 def main() -> None:
@@ -404,7 +409,11 @@ def main() -> None:
                                 'Retrieves messages in the first thread.',
                                 pyservice.Timeout.LONG,
                                 'None',
-                                'A list of decoded messages in the first thread.',
+                                '''A list of decoded messages in the first thread.  The first
+                                   element is the thread ID.  The remaining elements are the
+                                   messages in the thread.  Each message is an alternating pair
+                                   of a JSON string containing the message headers and the decoded
+                                   message body.''',
                                 '''*GmailException* - If an error occurs while searching for
                                     messages in the Gmail API.\\
                                     *ProtocolException* - If there is an unexpected content in a
@@ -415,6 +424,7 @@ def main() -> None:
                                 'Replies to a thread.',
                                 pyservice.Timeout.LONG,
                                 '''*thread_id* - ID of the thread to reply to.\\
+                                   *reply_to_message_id* - ID of the message to reply to.\\
                                    *mailto* - Email address of the sender.\\
                                    *subject* - The subject of the email message.\\
                                    *body* - The text of the email message.''',
