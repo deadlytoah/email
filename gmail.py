@@ -234,7 +234,7 @@ class Gmail:
         """
         try:
             results: Dict[str, Any] = self.service.users().threads().list(
-                userId='me', q=query).execute()
+                userId='me', q=query + ' label:inbox', maxResults=1).execute()
 
             # Get the first thread
             if results['threads']:
@@ -246,8 +246,9 @@ class Gmail:
                     userId='me', id=thread_id).execute()
                 messages: List[Dict[str, Any]] = thread['messages']
                 for message in messages:
-                    payload: Dict[str, Any] = message['payload']
-                    thread_messages.append(self.read_message(payload))
+                    if 'TRASH' not in message['labelIds']:
+                        payload: Dict[str, Any] = message['payload']
+                        thread_messages.append(self.read_message(payload))
                 return Thread(thread_id, thread_messages)
             else:
                 raise ProtocolException('No threads key or it has no value.')
