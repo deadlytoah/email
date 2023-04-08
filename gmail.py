@@ -4,12 +4,12 @@ import pyservice
 
 from dataclasses import dataclass
 from email.message import EmailMessage
-from google.auth.exceptions import RefreshError # type: ignore
-from google.auth.transport.requests import Request # type: ignore
-from google.oauth2.credentials import Credentials # type: ignore
-from google_auth_oauthlib.flow import InstalledAppFlow # type: ignore
-from googleapiclient.discovery import build # type: ignore
-from googleapiclient.errors import HttpError # type: ignore
+from google.auth.exceptions import RefreshError  # type: ignore
+from google.auth.transport.requests import Request  # type: ignore
+from google.oauth2.credentials import Credentials  # type: ignore
+from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
+from googleapiclient.discovery import build  # type: ignore
+from googleapiclient.errors import HttpError  # type: ignore
 from pyservice import Metadata, ProtocolException
 from typing import Any, Dict, List
 
@@ -22,10 +22,12 @@ TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
 
 EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
 
+
 @dataclass
 class Thread:
     id: int
     messages: List[Dict[str, str]]
+
 
 class Gmail:
     def authenticate(self):
@@ -71,7 +73,8 @@ class Gmail:
             GmailException: If an error occurs while sending the email.
         """
         try:
-            message = self.create_message(thread_id, EMAIL_ADDRESS, mailto, subject, body)
+            message = self.create_message(
+                thread_id, EMAIL_ADDRESS, mailto, subject, body)
             self.service.users().messages().send(userId="me", body=message).execute()
         except HttpError as error:
             raise GmailException(error)
@@ -98,7 +101,8 @@ class Gmail:
         """
         query: str = "to:" + mailto
         thread = self.query_next_thread(query)
-        thread.messages = [decode_mime_message(message) for message in thread.messages]
+        thread.messages = [decode_mime_message(
+            message) for message in thread.messages]
         return thread
 
     def check(self, mailto: str) -> List[Dict[str, str]]:
@@ -152,7 +156,8 @@ class Gmail:
             # Retrieve the message details for each matching message
             response: List[Dict[str, str]] = []
             for message in messages:
-                msg: Dict[str, Any] = self.service.users().messages().get(userId='me', id=message['id']).execute()
+                msg: Dict[str, Any] = self.service.users().messages().get(
+                    userId='me', id=message['id']).execute()
                 payload: Dict[str, Any] = msg['payload']
                 response.append(self.read_message(payload))
             return response
@@ -190,7 +195,8 @@ class Gmail:
 
                 # Get the messages in the thread
                 thread_messages: List[Dict[str, str]] = []
-                thread: Dict[str, Any] = self.service.users().threads().get(userId='me', id=thread_id).execute()
+                thread: Dict[str, Any] = self.service.users().threads().get(
+                    userId='me', id=thread_id).execute()
                 messages: List[Dict[str, Any]] = thread.get('messages', [])
                 for message in messages:
                     payload: Dict[str, Any] = message.get('payload', [])
@@ -254,9 +260,11 @@ class Gmail:
         message['subject'] = subject
         raw_message: bytes = base64.urlsafe_b64encode(message.as_bytes())
         return {'raw': raw_message.decode(),
-                'threadId': thread_id }
+                'threadId': thread_id}
+
 
 gmail: Gmail = Gmail()
+
 
 def base64_string_decode(base64_text: str) -> str:
     """
@@ -269,6 +277,7 @@ def base64_string_decode(base64_text: str) -> str:
         str: The decoded string.
     """
     return base64.urlsafe_b64decode(base64_text.encode('UTF-8')).decode('UTF-8')
+
 
 def decode_mime_message(mime_message: Dict[str, str]) -> Dict[str, str]:
     """
@@ -286,26 +295,32 @@ def decode_mime_message(mime_message: Dict[str, str]) -> Dict[str, str]:
     message: Dict[str, str] = {'body': base64_string_decode(mime_body)}
     return message
 
+
 class GmailException(Exception):
     def __init__(self, inner):
         super().__init__(inner)
 
+
 def check(arguments: List[str]) -> List[str]:
     global gmail
     return [message['body'] for message in gmail.check(mailto=EMAIL_ADDRESS)]
+
 
 def thread(arguments: List[str]) -> List[str]:
     global gmail
     thread = gmail.next_thread(mailto=EMAIL_ADDRESS)
     return [str(thread.id)] + [message['body'] for message in thread.messages]
 
+
 def reply(arguments: List[str]) -> List[str]:
     global gmail
     if len(arguments) > 3:
-        gmail.reply(thread_id=arguments[0], mailto=arguments[1], subject=arguments[2], body=arguments[3])
+        gmail.reply(thread_id=arguments[0], mailto=arguments[1],
+                    subject=arguments[2], body=arguments[3])
         return []
     else:
-        raise ProtocolException('reply requires 4 arguments')
+        raise ValueError('reply requires 4 arguments')
+
 
 def main() -> None:
     global gmail
@@ -325,11 +340,11 @@ def main() -> None:
     pyservice.register('thread',
                        thread,
                        Metadata('thread',
-                                 'Retrieves messages in the first thread.',
-                                 pyservice.Timeout.LONG,
-                                 'None',
-                                 'A list of decoded messages in the first thread.',
-                                 '''*GmailException* - If an error occurs while searching for
+                                'Retrieves messages in the first thread.',
+                                pyservice.Timeout.LONG,
+                                'None',
+                                'A list of decoded messages in the first thread.',
+                                '''*GmailException* - If an error occurs while searching for
                                     messages in the Gmail API.\\
                                     *ProtocolException* - If there is an unexpected content in a
                                     message payload.'''))
@@ -345,8 +360,9 @@ def main() -> None:
                                 'None',
                                 '''*GmailException* - If an error occurs while searching for
                                     messages in the Gmail API.'''))
-    
+
     pyservice.service_main()
+
 
 if __name__ == '__main__':
     main()
