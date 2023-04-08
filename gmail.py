@@ -1,4 +1,5 @@
 import base64
+import json
 import os.path
 import pyservice
 
@@ -11,7 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 from pyservice import Metadata, ProtocolException
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.compose',
@@ -23,10 +24,41 @@ TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
 EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
 
 
+class Headers(dict):
+    def __init__(self, headers: List[Dict[str, str]]):
+        super().__init__()
+        for header in headers:
+            self[header["name"]] = header["value"]
+
+
+@dataclass
+class MimeBody:
+    content_type: str
+    content: str
+
+
+@dataclass
+class Message:
+    header: Headers
+    body: Union[MimeBody, str]
+
+    def get_body_str(self) -> str:
+        if isinstance(self.body, str):
+            return self.body
+        else:
+            raise ValueError('found unexpected a MIME message')
+
+    def get_body_mime(self) -> MimeBody:
+        if isinstance(self.body, MimeBody):
+            return self.body
+        else:
+            raise ValueError('expected a MIME message')
+
+
 @dataclass
 class Thread:
     id: int
-    messages: List[Dict[str, str]]
+    messages: List[Message]
 
 
 class Gmail:
@@ -105,7 +137,7 @@ class Gmail:
             message) for message in thread.messages]
         return thread
 
-    def check(self, mailto: str) -> List[Dict[str, str]]:
+    def check(self, mailto: str) -> List[Message]:
         """
         Searches for messages addressed to the specified email address
         and returns their decoded content.
@@ -128,7 +160,7 @@ class Gmail:
         query: str = "to:" + mailto
         return [decode_mime_message(message) for message in self.query_messages(query)]
 
-    def query_messages(self, query: str) -> List[Dict[str, str]]:
+    def query_messages(self, query: str) -> List[Message]:
         """
         Searches for MIME messages in the Gmail account that match the
         specified query.
@@ -138,8 +170,7 @@ class Gmail:
             messages.
 
         Returns:
-            List[Dict[str, str]]: A list of dictionaries representing
-            the messages found.  "mime_body" in each dictionary
+            List[Message]: A list of messages found.  Each message
             contains the base64-decoded plain text content of the
             message body.
 
@@ -154,7 +185,7 @@ class Gmail:
                 userId='me', q=query).execute()
             messages: List[Dict[str, str]] = results.get('messages', [])
             # Retrieve the message details for each matching message
-            response: List[Dict[str, str]] = []
+            response: List[Message] = []
             for message in messages:
                 msg: Dict[str, Any] = self.service.users().messages().get(
                     userId='me', id=message['id']).execute()
@@ -190,24 +221,26 @@ class Gmail:
                 userId='me', q=query).execute()
 
             # Get the first thread
-            if 'threads' in results and results['threads']:
+            if results['threads']:
                 thread_id: int = results['threads'][0]['id']
 
                 # Get the messages in the thread
-                thread_messages: List[Dict[str, str]] = []
+                thread_messages: List[Message] = []
                 thread: Dict[str, Any] = self.service.users().threads().get(
                     userId='me', id=thread_id).execute()
-                messages: List[Dict[str, Any]] = thread.get('messages', [])
+                messages: List[Dict[str, Any]] = thread['messages']
                 for message in messages:
-                    payload: Dict[str, Any] = message.get('payload', [])
+                    payload: Dict[str, Any] = message['payload']
                     thread_messages.append(self.read_message(payload))
                 return Thread(thread_id, thread_messages)
             else:
                 raise ProtocolException('No threads key or it has no value.')
+        except KeyError as error:
+            raise ProtocolException(f'No key {error} or it has no value.')
         except HttpError as error:
             raise GmailException(error)
 
-    def read_message(self, payload: Dict[str, Any]) -> Dict[str, str]:
+    def read_message(self, payload: Dict[str, Any]) -> Message:
         """
         Extracts the plain text content of the specified Gmail message
         payload.
@@ -217,27 +250,21 @@ class Gmail:
             Gmail message.
 
         Returns:
-            Dict[str, str]: A dictionary representing a
-            message. "mime_body" contains the base64-decoded plain
+            Message: The message containing the base64-encoded plain
             text content of the message body.
 
         Raises:
             ProtocolException: If there is no plain text MIME part in
             the message payload, or if the MIME part is empty.
         """
-        message: Dict[str, str] = {}
-        parts: List[Dict[str, Any]] = payload['parts']
-        for part in parts:
-            body: Dict[str, Any] = part['body']
-            if body['size'] > 0:
-                content_type: str = part['mimeType']
-                if content_type == 'text/plain':
-                    message['mime_body'] = body['data']
-                    break
-        if message.get('mime_body'):
-            return message
+        content_type = payload['mimeType']
+        if content_type == 'text/plain':
+            return Gmail.__read_plaintext(payload)
+        elif content_type == 'multipart/alternative':
+            return Gmail.__read_multipart_alternative(payload)
         else:
-            raise ProtocolException('text/plain MIME part is missing or empty')
+            raise ProtocolException(
+                f'Unexpected MIME type {content_type} in message payload.')
 
     def create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str) -> Dict[str, str]:
         """
@@ -262,6 +289,36 @@ class Gmail:
         return {'raw': raw_message.decode(),
                 'threadId': thread_id}
 
+    @staticmethod
+    def __read_multipart_alternative(payload: Dict[str, Any]) -> Message:
+        message: Optional[Message] = None
+        parts: List[Dict[str, Any]] = payload['parts']
+        for part in parts:
+            body: Dict[str, Any] = part['body']
+            if body['size'] > 0:
+                content_type: str = part['mimeType']
+                if content_type == 'text/plain':
+                    headers = Headers(payload['headers'])
+                    message = Message(headers, body=MimeBody(content_type=content_type,
+                                                             content=body['data']))
+                    break
+        if message is not None:
+            return message
+        else:
+            raise ProtocolException('text/plain MIME part is missing or empty')
+
+    @staticmethod
+    def __read_plaintext(payload: Dict[str, Any]) -> Message:
+        body: Dict[str, Any] = payload['body']
+        data: str
+        if body['size'] > 0:
+            data = body['data']
+        else:
+            data = ''
+        headers = payload['headers']
+        return Message(Headers(headers), body=MimeBody(content_type='text/plain',
+                                                       content=data))
+
 
 gmail: Gmail = Gmail()
 
@@ -279,21 +336,21 @@ def base64_string_decode(base64_text: str) -> str:
     return base64.urlsafe_b64decode(base64_text.encode('UTF-8')).decode('UTF-8')
 
 
-def decode_mime_message(mime_message: Dict[str, str]) -> Dict[str, str]:
+def decode_mime_message(message: Message) -> Message:
     """
-    Decodes a MIME message and returns its body as a string.
+    Decodes a MIME message and returns the decoded message.
 
     Args:
-        mime_message (dict): Represents a MIME message, with
-        'mime_body' containing the encoded body.
+        message (Message): Represents a MIME message.
 
     Returns:
-        message (dict): A dictionary with a key 'body' that
-        contains the decoded body as a string.
+        message (Message): A new message that contains the decoded
+        body as a string.
+
+    Raises:
+        ValueError: If the message is not a MIME message.
     """
-    mime_body: str = mime_message['mime_body']
-    message: Dict[str, str] = {'body': base64_string_decode(mime_body)}
-    return message
+    return Message(message.header, base64_string_decode(message.get_body_mime().content))
 
 
 class GmailException(Exception):
@@ -303,13 +360,17 @@ class GmailException(Exception):
 
 def check(arguments: List[str]) -> List[str]:
     global gmail
-    return [message['body'] for message in gmail.check(mailto=EMAIL_ADDRESS)]
+    return [message.get_body_str() for message in gmail.check(mailto=EMAIL_ADDRESS)]
 
 
 def thread(arguments: List[str]) -> List[str]:
     global gmail
     thread = gmail.next_thread(mailto=EMAIL_ADDRESS)
-    return [str(thread.id)] + [message['body'] for message in thread.messages]
+    response = [str(thread.id)]
+    for message in thread.messages:
+        response.append(json.dumps(message.header))
+        response.append(message.get_body_str())
+    return response
 
 
 def reply(arguments: List[str]) -> List[str]:
