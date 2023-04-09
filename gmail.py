@@ -12,6 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 from pyservice import Metadata, ProtocolException
+from pyservice.email import Headers, Message, MimeBody, Thread
 from typing import Any, Dict, List, Optional, Union
 
 # If modifying these scopes, delete the file token.json.
@@ -22,43 +23,6 @@ CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
 TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
 
 EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
-
-
-class Headers(dict):
-    def __init__(self, headers: List[Dict[str, str]]):
-        super().__init__()
-        for header in headers:
-            self[header["name"]] = header["value"]
-
-
-@dataclass
-class MimeBody:
-    content_type: str
-    content: str
-
-
-@dataclass
-class Message:
-    header: Headers
-    body: Union[MimeBody, str]
-
-    def get_body_str(self) -> str:
-        if isinstance(self.body, str):
-            return self.body
-        else:
-            raise ValueError('found unexpected a MIME message')
-
-    def get_body_mime(self) -> MimeBody:
-        if isinstance(self.body, MimeBody):
-            return self.body
-        else:
-            raise ValueError('expected a MIME message')
-
-
-@dataclass
-class Thread:
-    id: int
-    messages: List[Message]
 
 
 class Gmail:
@@ -174,9 +138,9 @@ class Gmail:
             message payload.
         """
         query: str = "to:" + mailto
-        return [decode_mime_message(message) for message in self.query_messages(query)]
+        return [decode_mime_message(message) for message in self.__query_messages(query)]
 
-    def query_messages(self, query: str) -> List[Message]:
+    def __query_messages(self, query: str) -> List[Message]:
         """
         Searches for MIME messages in the Gmail account that match the
         specified query.
