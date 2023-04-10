@@ -336,7 +336,7 @@ def decode_mime_message(message: Message) -> Message:
     Raises:
         ValueError: If the message is not a MIME message.
     """
-    return Message(message.header, base64_string_decode(message.get_body_mime().content))
+    return Message(message.headers, base64_string_decode(message.get_body_mime().content))
 
 
 class GmailException(Exception):
@@ -354,7 +354,7 @@ def thread(arguments: List[str]) -> List[str]:
     thread = gmail.next_thread(mailto=EMAIL_ADDRESS)
     response = [str(thread.id)]
     for message in thread.messages:
-        response.append(json.dumps(message.header))
+        response.append(json.dumps(message.headers))
         response.append(message.get_body_str())
     return response
 
