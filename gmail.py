@@ -202,7 +202,7 @@ class Gmail:
 
             # Get the first thread
             if results['threads']:
-                thread_id: int = results['threads'][0]['id']
+                thread_id: str = results['threads'][0]['id']
 
                 # Get the messages in the thread
                 thread_messages: List[Message] = []
