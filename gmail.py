@@ -284,7 +284,7 @@ class Gmail:
             if body['size'] > 0:
                 content_type: str = part['mimeType']
                 if content_type == 'text/plain':
-                    headers = Headers(payload['headers'])
+                    headers = Headers.from_email_headers(payload['headers'])
                     message = Message(headers, body=MimeBody(content_type=content_type,
                                                              content=body['data']))
                     break
@@ -302,8 +302,9 @@ class Gmail:
         else:
             data = ''
         headers = payload['headers']
-        return Message(Headers(headers), body=MimeBody(content_type='text/plain',
-                                                       content=data))
+        return Message(Headers.from_email_headers(headers),
+                       body=MimeBody(content_type='text/plain',
+                                     content=data))
 
 
 gmail: Gmail = Gmail()
