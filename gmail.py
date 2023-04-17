@@ -1,19 +1,20 @@
 import base64
 import json
 import os.path
-import pyservice
-
 from dataclasses import dataclass
 from email.message import EmailMessage
+from typing import Any, Dict, List, Optional, Union
+
 from google.auth.exceptions import RefreshError  # type: ignore
 from google.auth.transport.requests import Request  # type: ignore
 from google.oauth2.credentials import Credentials  # type: ignore
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
+
+import pyservice
 from pyservice import Metadata, ProtocolException
 from pyservice.email import Headers, Message, MimeBody, Thread
-from typing import Any, Dict, List, Optional, Union
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.compose',
@@ -170,7 +171,7 @@ class Gmail:
                 msg: Dict[str, Any] = self.service.users().messages().get(
                     userId='me', id=message['id']).execute()
                 payload: Dict[str, Any] = msg['payload']
-                response.append(self.read_message(payload))
+                response.append(self.__read_message(payload))
             return response
         except HttpError as error:
             raise GmailException(error)
@@ -212,7 +213,7 @@ class Gmail:
                 for message in messages:
                     if 'TRASH' not in message['labelIds']:
                         payload: Dict[str, Any] = message['payload']
-                        thread_messages.append(self.read_message(payload))
+                        thread_messages.append(self.__read_message(payload))
                 return Thread(thread_id, thread_messages)
             else:
                 raise ProtocolException('No threads key or it has no value.')
@@ -221,7 +222,7 @@ class Gmail:
         except HttpError as error:
             raise GmailException(error)
 
-    def read_message(self, payload: Dict[str, Any]) -> Message:
+    def __read_message(self, payload: Dict[str, Any]) -> Message:
         """
         Extracts the plain text content of the specified Gmail message
         payload.
@@ -355,7 +356,7 @@ def thread(arguments: List[str]) -> List[str]:
     thread = gmail.next_thread(mailto=EMAIL_ADDRESS)
     response = [str(thread.id)]
     for message in thread.messages:
-        response.append(json.dumps(message.headers))
+        response.append(json.dumps(message.headers, ensure_ascii=False))
         response.append(message.get_body_str())
     return response
 
