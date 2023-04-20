@@ -1,9 +1,7 @@
 import base64
-import json
 import os.path
-from dataclasses import dataclass
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from google.auth.exceptions import RefreshError  # type: ignore
 from google.auth.transport.requests import Request  # type: ignore
@@ -12,8 +10,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 
-import pyservice
-from pyservice import Metadata, ProtocolException
+from pyservice import ProtocolException
 from pyservice.email import Headers, Message, MimeBody, Thread
 
 # If modifying these scopes, delete the file token.json.
@@ -22,8 +19,6 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.compose',
 
 CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
 TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
-
-EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
 
 
 class Gmail:
@@ -73,7 +68,7 @@ class Gmail:
         except HttpError as error:
             raise GmailException(error)
 
-    def reply(self, thread_id: str, reply_to_message_id: str, mailto: str, subject: str, body: str) -> None:
+    def reply(self, thread_id: str, reply_to_message_id: str, mailfrom: str, mailto: str, subject: str, body: str) -> None:
         """
         Replies to the given thread.
 
@@ -86,8 +81,8 @@ class Gmail:
             GmailException: If an error occurs while sending the email.
         """
         try:
-            message = self.create_message(
-                thread_id, EMAIL_ADDRESS, mailto, subject, body, reply_to=reply_to_message_id)
+            message = self.__create_message(
+                thread_id, mailfrom, mailto, subject, body, reply_to=reply_to_message_id)
             self.service.users().messages().send(userId="me", body=message).execute()
         except HttpError as error:
             raise GmailException(error)
@@ -248,7 +243,7 @@ class Gmail:
             raise ProtocolException(
                 f'Unexpected MIME type {content_type} in message payload.')
 
-    def create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str, reply_to: Optional[str] = None) -> Dict[str, str]:
+    def __create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str, reply_to: Optional[str] = None) -> Dict[str, str]:
         """
         Creates a message for an email.
 
@@ -308,9 +303,6 @@ class Gmail:
                                      content=data))
 
 
-gmail: Gmail = Gmail()
-
-
 def base64_string_decode(base64_text: str) -> str:
     """
     Decodes a base64 encoded string.
@@ -342,99 +334,13 @@ def decode_mime_message(message: Message) -> Message:
 
 
 class GmailException(Exception):
-    def __init__(self, inner):
-        super().__init__(inner)
+    """
+    Represents an exception that occurred while interacting with the
+    Gmail API.
 
+    :param inner: The inner exception.
+    :type inner: Exception
+    """
 
-def check(arguments: List[str]) -> List[str]:
-    global gmail
-    return [message.get_body_str() for message in gmail.check(mailto=EMAIL_ADDRESS)]
-
-
-def thread(arguments: List[str]) -> List[str]:
-    global gmail
-    thread = gmail.next_thread(mailto=EMAIL_ADDRESS)
-    response = [str(thread.id)]
-    for message in thread.messages:
-        response.append(json.dumps(message.headers, ensure_ascii=False))
-        response.append(message.get_body_str())
-    return response
-
-
-def reply(arguments: List[str]) -> List[str]:
-    global gmail
-    if len(arguments) > 4:
-        gmail.reply(thread_id=arguments[0], reply_to_message_id=arguments[1], mailto=arguments[2],
-                    subject=arguments[3], body=arguments[4])
-        return []
-    else:
-        raise ValueError('reply requires 5 arguments')
-
-
-def archive(arguments: List[str]) -> List[str]:
-    global gmail
-    if len(arguments) > 0:
-        gmail.archive(thread_id=arguments[0])
-        return []
-    else:
-        raise ValueError('archive requires 1 argument')
-
-
-def main() -> None:
-    global gmail
-    gmail.authenticate()
-
-    pyservice.register('check',
-                       check,
-                       Metadata('check',
-                                'Retrieves messages in INBOX.',
-                                pyservice.Timeout.LONG,
-                                'None',
-                                'A list of strings containing the decoded body of the messages.',
-                                '''*GmailException* - If an error occurs while searching for
-                                    messages in the Gmail API.\\
-                                    *ProtocolException* - If there is an unexpected content in a
-                                    message payload.'''))
-    pyservice.register('thread',
-                       thread,
-                       Metadata('thread',
-                                'Retrieves messages in the first thread.',
-                                pyservice.Timeout.LONG,
-                                'None',
-                                '''A list of decoded messages in the first thread.  The first
-                                   element is the thread ID.  The remaining elements are the
-                                   messages in the thread.  Each message is an alternating pair
-                                   of a JSON string containing the message headers and the decoded
-                                   message body.''',
-                                '''*GmailException* - If an error occurs while searching for
-                                    messages in the Gmail API.\\
-                                    *ProtocolException* - If there is an unexpected content in a
-                                    message payload.'''))
-    pyservice.register('reply',
-                       reply,
-                       Metadata('reply',
-                                'Replies to a thread.',
-                                pyservice.Timeout.LONG,
-                                '''*thread_id* - ID of the thread to reply to.\\
-                                   *reply_to_message_id* - ID of the message to reply to.\\
-                                   *mailto* - Email address of the sender.\\
-                                   *subject* - The subject of the email message.\\
-                                   *body* - The text of the email message.''',
-                                'None',
-                                '''*GmailException* - If an error occurs while searching for
-                                    messages in the Gmail API.'''))
-    pyservice.register('archive',
-                       archive,
-                       Metadata('archive',
-                                'Archives a thread.',
-                                pyservice.Timeout.LONG,
-                                '*thread_id* - ID of the thread to archive.',
-                                'None',
-                                '''*GmailException* - If an error occurs while searching for
-                                    messages in the Gmail API.'''))
-
-    pyservice.service_main()
-
-
-if __name__ == '__main__':
-    main()
+    def __init__(self, inner: Exception):
+        super(GmailException, self).__init__(inner)
