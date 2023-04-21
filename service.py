@@ -4,6 +4,7 @@ from typing import List
 
 from gmail import Gmail
 from pyservice import Metadata, Service, Timeout
+from pyservice.metadata import Argument, Arguments
 
 EMAIL_ADDRESS = "thevoicekorea+chat@gmail.com"
 
@@ -22,54 +23,67 @@ class GmailService(Service):
         self.__register_service_commands()
 
     def __register_service_commands(self: 'GmailService') -> None:
-        self.register_command('check',
-                              self.check,
-                              Metadata('check',
-                                       'Retrieves messages in INBOX.',
-                                       Timeout.LONG,
-                                       'None',
-                                       'A list of strings containing the decoded body of the messages.',
-                                       '''*GmailException* - If an error occurs while searching for
-                                        messages in the Gmail API.\\
-                                        *ProtocolException* - If there is an unexpected content in a
-                                        message payload.'''))
-        self.register_command('thread',
-                              self.thread,
-                              Metadata('thread',
-                                       'Retrieves messages in the first thread.',
-                                       Timeout.LONG,
-                                       'None',
-                                       '''A list of decoded messages in the first thread.  The first
-                                    element is the thread ID.  The remaining elements are the
-                                    messages in the thread.  Each message is an alternating pair
-                                    of a JSON string containing the message headers and the decoded
-                                    message body.''',
-                                       '''*GmailException* - If an error occurs while searching for
-                                        messages in the Gmail API.\\
-                                        *ProtocolException* - If there is an unexpected content in a
-                                        message payload.'''))
-        self.register_command('reply',
-                              self.reply,
-                              Metadata('reply',
-                                       'Replies to a thread.',
-                                       Timeout.LONG,
-                                       '''*thread_id* - ID of the thread to reply to.\\
-                                    *reply_to_message_id* - ID of the message to reply to.\\
-                                    *mailto* - Email address of the sender.\\
-                                    *subject* - The subject of the email message.\\
-                                    *body* - The text of the email message.''',
-                                       'None',
-                                       '''*GmailException* - If an error occurs while searching for
-                                        messages in the Gmail API.'''))
-        self.register_command('archive',
-                              self.archive,
-                              Metadata('archive',
-                                       'Archives a thread.',
-                                       Timeout.LONG,
-                                       '*thread_id* - ID of the thread to archive.',
-                                       'None',
-                                       '''*GmailException* - If an error occurs while searching for
-                                        messages in the Gmail API.'''))
+        self.register_command(
+            'check',
+            self.check,
+            Metadata(
+                name='check',
+                description='Retrieves messages in INBOX.',
+                timeout=Timeout.LONG,
+                arguments=Arguments.none(),
+                returns='A list of strings containing the decoded body of the messages.',
+                errors='''*GmailException* - If an error occurs while searching for
+                            messages in the Gmail API.\\
+                            *ProtocolException* - If there is an unexpected content in a
+                            message payload.'''))
+        self.register_command(
+            'thread',
+            self.thread,
+            Metadata(
+                name='thread',
+                description='Retrieves messages in the first thread.',
+                timeout=Timeout.LONG,
+                arguments=Arguments.none(),
+                returns='''A list of decoded messages in the first thread.  The first
+                            element is the thread ID.  The remaining elements are the
+                            messages in the thread.  Each message is an alternating pair
+                            of a JSON string containing the message headers and the decoded
+                            message body.''',
+                errors='''*GmailException* - If an error occurs while searching for
+                            messages in the Gmail API.\\
+                            *ProtocolException* - If there is an unexpected content in a
+                            message payload.'''))
+        self.register_command(
+            'reply',
+            self.reply,
+            Metadata(
+                name='reply',
+                description='Replies to a thread.',
+                timeout=Timeout.LONG,
+                arguments=Arguments(
+                    Argument('Thread ID', 'ID of the thread to reply to.'),
+                    Argument('Original Message ID',
+                             'ID of the message to reply to.'),
+                    Argument('Sender', 'Email address of the sender.'),
+                    Argument('Subject', 'The subject of the email message.'),
+                    Argument('Body', 'The text of the email message.')
+                ),
+                returns='None',
+                errors='''*GmailException* - If an error occurs while searching for
+                        messages in the Gmail API.'''))
+        self.register_command(
+            'archive',
+            self.archive,
+            Metadata(
+                name='archive',
+                description='Archives a thread.',
+                timeout=Timeout.LONG,
+                arguments=Arguments(
+                    Argument('Thread ID', 'ID of the thread to archive.')),
+                returns='None',
+                errors='''*GmailException* - If an error occurs while searching for
+                        messages in the Gmail API.'''))
+
     def name(self) -> str:
         return f"Gmail Service [{EMAIL_ADDRESS}]"
     
