@@ -1,6 +1,7 @@
+import argparse
 import asyncio
 import json
-from typing import List
+from typing import List, Optional
 
 from gmail import Gmail
 from pyservice import Metadata, Service, Timeout
@@ -86,7 +87,7 @@ class GmailService(Service):
 
     def name(self) -> str:
         return f"Gmail Service [{EMAIL_ADDRESS}]"
-    
+
     def description(self) -> str:
         return f"Provides access to the Gmail account: {EMAIL_ADDRESS}"
 
@@ -167,13 +168,18 @@ class GmailService(Service):
             raise ValueError('archive requires 1 argument')
 
 
-async def main() -> None:
+async def main(port: Optional[int]) -> None:
     gmail = Gmail()
     gmail.authenticate()
 
     service = GmailService(gmail)
-    await service.run()
+    await service.run(port=port)
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description='Email Gateway Service for Gmail')
+    parser.add_argument('-p', '--port', type=int,
+                        help='The port to listen on.')
+    args = parser.parse_args()
+
+    asyncio.run(main(port=args.port))
