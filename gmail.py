@@ -63,8 +63,7 @@ class Gmail:
             GmailException: If an error occurs while archiving the thread.
         """
         try:
-            self.service.users().threads().modify(
-                userId="me", id=thread_id, body={"removeLabelIds": ["INBOX"]}).execute()
+            self.__archive_thread(thread_id)
         except HttpError as error:
             raise GmailException(error)
 
@@ -83,7 +82,7 @@ class Gmail:
         try:
             message = self.__create_message(
                 thread_id, mailfrom, mailto, subject, body, reply_to=reply_to_message_id)
-            self.service.users().messages().send(userId="me", body=message).execute()
+            self.__send_message(message)
         except HttpError as error:
             raise GmailException(error)
 
@@ -107,11 +106,14 @@ class Gmail:
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        query: str = "to:" + mailto
-        thread = self.query_next_thread(query)
-        thread.messages = [decode_mime_message(
-            message) for message in thread.messages]
-        return thread
+        try:
+            query: str = "to:" + mailto
+            thread = self.__query_next_thread(query)
+            thread.messages = [decode_mime_message(
+                message) for message in thread.messages]
+            return thread
+        except HttpError as error:
+            raise GmailException(error)
 
     def check(self, mailto: str) -> List[Message]:
         """
@@ -133,8 +135,15 @@ class Gmail:
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        query: str = "to:" + mailto
-        return [decode_mime_message(message) for message in self.__query_messages(query)]
+        try:
+            query: str = "to:" + mailto
+            return [decode_mime_message(message) for message in self.__query_messages(query)]
+        except HttpError as error:
+            raise GmailException(error)
+
+    def __archive_thread(self, thread_id: str) -> None:
+        self.service.users().threads().modify(
+            userId="me", id=thread_id, body={"removeLabelIds": ["INBOX"]}).execute()
 
     def __query_messages(self, query: str) -> List[Message]:
         """
@@ -151,27 +160,22 @@ class Gmail:
             message body.
 
         Raises:
-            GmailException: If an error occurs while searching for
-            messages in the Gmail API.
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        try:
-            results: Dict[str, Any] = self.service.users().messages().list(
-                userId='me', q=query).execute()
-            messages: List[Dict[str, str]] = results.get('messages', [])
-            # Retrieve the message details for each matching message
-            response: List[Message] = []
-            for message in messages:
-                msg: Dict[str, Any] = self.service.users().messages().get(
-                    userId='me', id=message['id']).execute()
-                payload: Dict[str, Any] = msg['payload']
-                response.append(self.__read_message(payload))
-            return response
-        except HttpError as error:
-            raise GmailException(error)
+        results: Dict[str, Any] = self.service.users().messages().list(
+            userId='me', q=query).execute()
+        messages: List[Dict[str, str]] = results.get('messages', [])
+        # Retrieve the message details for each matching message
+        response: List[Message] = []
+        for message in messages:
+            msg: Dict[str, Any] = self.service.users().messages().get(
+                userId='me', id=message['id']).execute()
+            payload: Dict[str, Any] = msg['payload']
+            response.append(self.__read_message(payload))
+        return response
 
-    def query_next_thread(self, query: str) -> Thread:
+    def __query_next_thread(self, query: str) -> Thread:
         """
         Searches for MIME messages in the Gmail account that match the
         specified query.
@@ -187,8 +191,6 @@ class Gmail:
             message body.
 
         Raises:
-            GmailException: If an error occurs while searching for
-            messages in the Gmail API.
             ProtocolException: If there is an unexpected content a
             message payload.
         """
@@ -214,8 +216,6 @@ class Gmail:
                 raise ProtocolException('No threads key or it has no value.')
         except KeyError as error:
             raise ProtocolException(f'No key {error} or it has no value.')
-        except HttpError as error:
-            raise GmailException(error)
 
     def __read_message(self, payload: Dict[str, Any]) -> Message:
         """
@@ -270,6 +270,9 @@ class Gmail:
         raw_message: bytes = base64.urlsafe_b64encode(message.as_bytes())
         return {'raw': raw_message.decode(),
                 'threadId': thread_id}
+
+    def __send_message(self, message: Dict[str, str]) -> None:
+        self.service.users().messages().send(userId="me", body=message).execute()
 
     @staticmethod
     def __read_multipart_alternative(payload: Dict[str, Any]) -> Message:
