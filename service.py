@@ -4,6 +4,7 @@ import json
 from typing import List, Optional
 
 from gmail import Gmail
+from proxy import Proxy
 from pyservice import Metadata, Service, Timeout
 from pyservice.metadata import Argument, Arguments
 
@@ -169,15 +170,15 @@ class GmailService(Service):
 
 
 async def main(port: Optional[int]) -> None:
-    gmail = Gmail()
-    gmail.authenticate()
+    gmail = Gmail(Proxy().authenticate())
 
     service = GmailService(gmail)
     await service.run(port=port)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Email Gateway Service for Gmail')
+    parser = argparse.ArgumentParser(
+        description='Email Gateway Service for Gmail')
     parser.add_argument('-p', '--port', type=int,
                         help='The port to listen on.')
     args = parser.parse_args()

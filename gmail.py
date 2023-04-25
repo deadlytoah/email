@@ -1,56 +1,15 @@
 import base64
-import os.path
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
-from google.auth.exceptions import RefreshError  # type: ignore
-from google.auth.transport.requests import Request  # type: ignore
-from google.oauth2.credentials import Credentials  # type: ignore
-from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
-from googleapiclient.discovery import build  # type: ignore
-from googleapiclient.errors import HttpError  # type: ignore
-
+from proxy import Proxy
 from pyservice import ProtocolException
 from pyservice.email import Headers, Message, MimeBody, Thread
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.compose',
-          'https://www.googleapis.com/auth/gmail.modify']
-
-CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
-TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
-
 
 class Gmail:
-    def authenticate(self):
-        creds = None
-        # The file token.json stores the user's access and refresh tokens, and is
-        # created automatically when the authorization flow completes for the first
-        # time.
-        if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except RefreshError:
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        CLIENT_SECRETS_FILE, SCOPES)
-                    creds = flow.run_local_server(port=0)
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    CLIENT_SECRETS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
-            # Save the credentials for the next run
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
-
-        try:
-            # Call the Gmail API
-            self.service = build('gmail', 'v1', credentials=creds)
-        except HttpError as error:
-            raise GmailException(error)
+    def __init__(self, proxy: Proxy) -> None:
+        self.proxy = proxy
 
     def archive(self, thread_id: str) -> None:
         """
@@ -62,10 +21,7 @@ class Gmail:
         Raises:
             GmailException: If an error occurs while archiving the thread.
         """
-        try:
-            self.__archive_thread(thread_id)
-        except HttpError as error:
-            raise GmailException(error)
+        self.__archive_thread(thread_id)
 
     def reply(self, thread_id: str, reply_to_message_id: str, mailfrom: str, mailto: str, subject: str, body: str) -> None:
         """
@@ -79,12 +35,9 @@ class Gmail:
         Raises:
             GmailException: If an error occurs while sending the email.
         """
-        try:
-            message = self.__create_message(
-                thread_id, mailfrom, mailto, subject, body, reply_to=reply_to_message_id)
-            self.__send_message(message)
-        except HttpError as error:
-            raise GmailException(error)
+        message = self.__create_message(
+            thread_id, mailfrom, mailto, subject, body, reply_to=reply_to_message_id)
+        self.__send_message(message)
 
     def next_thread(self, mailto: str) -> Thread:
         """
@@ -106,14 +59,11 @@ class Gmail:
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        try:
-            query: str = "to:" + mailto
-            thread = self.__query_next_thread(query)
-            thread.messages = [decode_mime_message(
-                message) for message in thread.messages]
-            return thread
-        except HttpError as error:
-            raise GmailException(error)
+        query: str = "to:" + mailto
+        thread = self.__query_next_thread(query)
+        thread.messages = [decode_mime_message(
+            message) for message in thread.messages]
+        return thread
 
     def check(self, mailto: str) -> List[Message]:
         """
@@ -135,15 +85,11 @@ class Gmail:
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        try:
-            query: str = "to:" + mailto
-            return [decode_mime_message(message) for message in self.__query_messages(query)]
-        except HttpError as error:
-            raise GmailException(error)
+        query: str = "to:" + mailto
+        return [decode_mime_message(message) for message in self.__query_messages(query)]
 
     def __archive_thread(self, thread_id: str) -> None:
-        self.service.users().threads().modify(
-            userId="me", id=thread_id, body={"removeLabelIds": ["INBOX"]}).execute()
+        self.proxy.archive_thread(thread_id)
 
     def __query_messages(self, query: str) -> List[Message]:
         """
@@ -163,14 +109,12 @@ class Gmail:
             ProtocolException: If there is an unexpected content in a
             message payload.
         """
-        results: Dict[str, Any] = self.service.users().messages().list(
-            userId='me', q=query).execute()
+        results: Dict[str, Any] = self.proxy.query_messages(query)
         messages: List[Dict[str, str]] = results.get('messages', [])
         # Retrieve the message details for each matching message
         response: List[Message] = []
         for message in messages:
-            msg: Dict[str, Any] = self.service.users().messages().get(
-                userId='me', id=message['id']).execute()
+            msg: Dict[str, Any] = self.proxy.get_message(message['id'])
             payload: Dict[str, Any] = msg['payload']
             response.append(self.__read_message(payload))
         return response
@@ -195,8 +139,7 @@ class Gmail:
             message payload.
         """
         try:
-            results: Dict[str, Any] = self.service.users().threads().list(
-                userId='me', q=query + ' label:inbox', maxResults=1).execute()
+            results: Dict[str, Any] = self.proxy.query_threads(query)
 
             # Get the first thread
             if results['threads']:
@@ -204,8 +147,7 @@ class Gmail:
 
                 # Get the messages in the thread
                 thread_messages: List[Message] = []
-                thread: Dict[str, Any] = self.service.users().threads().get(
-                    userId='me', id=thread_id).execute()
+                thread: Dict[str, Any] = self.proxy.get_thread(thread_id)
                 messages: List[Dict[str, Any]] = thread['messages']
                 for message in messages:
                     if 'TRASH' not in message['labelIds']:
@@ -272,7 +214,7 @@ class Gmail:
                 'threadId': thread_id}
 
     def __send_message(self, message: Dict[str, str]) -> None:
-        self.service.users().messages().send(userId="me", body=message).execute()
+        self.proxy.send_message(message)
 
     @staticmethod
     def __read_multipart_alternative(payload: Dict[str, Any]) -> Message:
@@ -334,16 +276,3 @@ def decode_mime_message(message: Message) -> Message:
         ValueError: If the message is not a MIME message.
     """
     return Message(message.headers, base64_string_decode(message.get_body_mime().content))
-
-
-class GmailException(Exception):
-    """
-    Represents an exception that occurred while interacting with the
-    Gmail API.
-
-    :param inner: The inner exception.
-    :type inner: Exception
-    """
-
-    def __init__(self, inner: Exception):
-        super(GmailException, self).__init__(inner)
