@@ -1,5 +1,7 @@
 # If modifying these scopes, delete the file token.json.
 import os
+from enum import Enum
+from ssl import SSLEOFError
 from typing import Any, Dict
 
 from google.auth.exceptions import RefreshError  # type: ignore
@@ -9,6 +11,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build  # type: ignore
 from googleapiclient.errors import HttpError  # type: ignore
 
+from pyservice import FatalServiceError, ServiceException
+
 SCOPES = ['https://www.googleapis.com/auth/gmail.compose',
           'https://www.googleapis.com/auth/gmail.modify']
 
@@ -16,7 +20,16 @@ CLIENT_SECRETS_FILE = os.path.expanduser('~/.credentials/gmail.json')
 TOKEN_FILE = os.path.expanduser('~/.credentials/gmail-token.json')
 
 
-class GmailException(Exception):
+class GmailErrorCode(Enum):
+    """
+    Represents an error code that occurred while interacting with the
+    Gmail API.
+    """
+
+    Gmail = "ERROR_GMAIL"
+
+
+class GmailException(ServiceException):
     """
     Represents an exception that occurred while interacting with the
     Gmail API.
@@ -26,7 +39,7 @@ class GmailException(Exception):
     """
 
     def __init__(self, inner: Exception):
-        super(GmailException, self).__init__(inner)
+        super(GmailException, self).__init__(GmailErrorCode.Gmail, str(inner))
 
 
 class Proxy:
@@ -68,6 +81,8 @@ class Proxy:
             # Call the Gmail API
             self.service = build('gmail', 'v1', credentials=creds)
             return self
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -82,6 +97,8 @@ class Proxy:
         try:
             self.service.users().threads().modify(userId="me", id=thread_id,
                                                   body={"removeLabelIds": ["INBOX"]}).execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -97,6 +114,8 @@ class Proxy:
         """
         try:
             return self.service.users().messages().list(userId='me', q=query + ' label:inbox').execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -112,6 +131,8 @@ class Proxy:
         """
         try:
             return self.service.users().messages().get(userId='me', id=message_id).execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -127,6 +148,8 @@ class Proxy:
         """
         try:
             return self.service.users().threads().list(userId='me', q=query + ' label:inbox', maxResults=1).execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -142,6 +165,8 @@ class Proxy:
         """
         try:
             return self.service.users().threads().get(userId='me', id=thread_id).execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -156,5 +181,7 @@ class Proxy:
         """
         try:
             self.service.users().messages().send(userId="me", body=message).execute()
+        except SSLEOFError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
