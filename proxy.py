@@ -101,6 +101,8 @@ class Proxy:
             return self
         except SSLEOFError as error:
             raise FatalServiceError(str(error))
+        except RefreshError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -116,6 +118,8 @@ class Proxy:
             self.service.users().threads().modify(userId="me", id=thread_id,
                                                   body={"removeLabelIds": ["INBOX"]}).execute()
         except SSLEOFError as error:
+            raise FatalServiceError(str(error))
+        except RefreshError as error:
             raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
@@ -134,6 +138,8 @@ class Proxy:
             return self.service.users().messages().list(userId='me', q=query + ' label:inbox').execute()
         except SSLEOFError as error:
             raise FatalServiceError(str(error))
+        except RefreshError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -150,6 +156,8 @@ class Proxy:
         try:
             return self.service.users().messages().get(userId='me', id=message_id).execute()
         except SSLEOFError as error:
+            raise FatalServiceError(str(error))
+        except RefreshError as error:
             raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
@@ -168,6 +176,8 @@ class Proxy:
             return self.service.users().threads().list(userId='me', q=query + ' label:inbox', maxResults=1).execute()
         except SSLEOFError as error:
             raise FatalServiceError(str(error))
+        except RefreshError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -185,6 +195,8 @@ class Proxy:
             return self.service.users().threads().get(userId='me', id=thread_id).execute()
         except SSLEOFError as error:
             raise FatalServiceError(str(error))
+        except RefreshError as error:
+            raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
 
@@ -200,6 +212,8 @@ class Proxy:
         try:
             self.service.users().messages().send(userId="me", body=message).execute()
         except SSLEOFError as error:
+            raise FatalServiceError(str(error))
+        except RefreshError as error:
             raise FatalServiceError(str(error))
         except HttpError as error:
             raise GmailException(error)
