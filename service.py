@@ -134,20 +134,23 @@ class GmailService(Service):
                  element is the thread ID.  The remaining elements are the
                  messages in the thread.  Each message is an alternating pair
                  of a JSON string containing the message headers and the
-                 decoded message body.
+                 decoded message body.  Returns an empty list if there are no
+                 threads to return.
         :rtype: List[str]
         :raises GmailException: If an error occurs while searching for
                                 messages in the Gmail API.
         :raises ProtocolException: If there is an unexpected content in a
                                    message payload.
         """
-        thread = self.gmail.next_thread(mailto=EMAIL_ADDRESS)
-        response = [str(thread.id)]
-        for message in thread.messages:
-            response.append(json.dumps(
-                message.headers, ensure_ascii=False))
-            response.append(message.get_body_str())
-        return response
+        if thread := self.gmail.next_thread(mailto=EMAIL_ADDRESS):
+            response = [thread.id]
+            for message in thread.messages:
+                response.append(json.dumps(
+                    message.headers, ensure_ascii=False))
+                response.append(message.get_body_str())
+            return response
+        else:
+            return []
 
     def reply(self, arguments: List[str]) -> List[str]:
         """

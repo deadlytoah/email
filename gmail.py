@@ -20,9 +20,10 @@ import base64
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional
 
-from proxy import Proxy
 from pyservice import ProtocolException
 from pyservice.email import Headers, Message, MimeBody, Thread
+
+from proxy import Proxy
 
 
 class Gmail:
@@ -57,31 +58,30 @@ class Gmail:
             thread_id, mailfrom, mailto, subject, body, reply_to=reply_to_message_id)
         self.__send_message(message)
 
-    def next_thread(self, mailto: str) -> Thread:
+    def next_thread(self, mailto: str) -> Optional[Thread]:
         """
         Retrieves all messages in the next thread, addressed to the
         given email (i.e., "mailto" address).
 
-        Args:
-            mailto: A string specifying the email address to search
-            for in the "to" field of the messages.
-
-        Returns:
-            A list of decoded messages in the next thread. Each
-            dictionary has a single key "body" whose value is a string
-            representing the decoded body of a message.
-
-        Raises:
-            GmailException: If an error occurs while searching for
-            messages in the Gmail API.
-            ProtocolException: If there is an unexpected content in a
-            message payload.
+        :arg mailto: The email address to search for in the "to" field
+                     of the messages.
+        :type mailto: str
+        :returns: A list of decoded messages in the next thread. Each
+                  dictionary has a single key "body" whose value is a
+                  string representing the decoded body of a message.
+        :rtype: Optional[Thread]
+        :raises GmailException: If an error occurs while searching for
+                                messages in the Gmail API.
+        :raises ProtocolException: If there is an unexpected content in
+                                   a message payload.
         """
         query: str = "to:" + mailto
-        thread = self.__query_next_thread(query)
-        thread.messages = [decode_mime_message(
-            message) for message in thread.messages]
-        return thread
+        if thread := self.__query_next_thread(query):
+            thread.messages = [decode_mime_message(
+                message) for message in thread.messages]
+            return thread
+        else:
+            return None
 
     def check(self, mailto: str) -> List[Message]:
         """
@@ -137,30 +137,26 @@ class Gmail:
             response.append(self.__read_message(payload))
         return response
 
-    def __query_next_thread(self, query: str) -> Thread:
+    def __query_next_thread(self, query: str) -> Optional[Thread]:
         """
         Searches for MIME messages in the Gmail account that match the
         specified query.
 
-        Args:
-            query (str): The search query to use when searching for
-            messages.
-
-        Returns:
-            List[Dict[str, str]]: A list of dictionaries representing
-            the messages found.  "mime_body" in each dictionary
-            contains the base64-decoded plain text content of the
-            message body.
-
-        Raises:
-            ProtocolException: If there is an unexpected content a
-            message payload.
+        :param query: The search query to use.
+        :type query: str
+        :return: A list of messages in the thread that matches the
+                 query.  "mime_body" in each dictionary contains the
+                 base64-decoded plain text content of the message
+                 body.  None if there was no match.
+        :rtype: Optional[Thread]
+        :raises ProtocolException: If there is an unexpected content
+                                   in a message payload.
         """
-        try:
-            results: Dict[str, Any] = self.proxy.query_threads(query)
+        results: Dict[str, Any] = self.proxy.query_threads(query)
 
-            # Get the first thread
-            if results['threads']:
+        try:
+            if results['resultSizeEstimate'] > 0:
+                # Get the first thread
                 thread_id: str = results['threads'][0]['id']
 
                 # Get the messages in the thread
@@ -173,9 +169,10 @@ class Gmail:
                         thread_messages.append(self.__read_message(payload))
                 return Thread(thread_id, thread_messages)
             else:
-                raise ProtocolException('No threads key or it has no value.')
+                return None
         except KeyError as error:
-            raise ProtocolException(f'No key {error} or it has no value.')
+            raise ProtocolException(
+                f'No key {error} or it has no value.', context=f"Response from Gmail API:\n{results}")
 
     def __read_message(self, payload: Dict[str, Any]) -> Message:
         """
