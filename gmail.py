@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from pyservice import ProtocolException
 from pyservice.email import Headers, Message, MimeBody, Thread
 
+import util
 from proxy import Proxy
 
 
@@ -196,9 +197,13 @@ class Gmail:
             return Gmail.__read_plaintext(payload)
         elif content_type == 'multipart/alternative':
             return Gmail.__read_multipart_alternative(payload)
+        elif content_type == 'multipart/mixed':
+            return Gmail.__read_multipart_mixed(payload)
         else:
+            tree = util.sprint_dictionary_keys(payload)
             raise ProtocolException(
-                f'Unexpected MIME type {content_type} in message payload.')
+                f'Unexpected MIME type {content_type} in message payload.',
+                context=tree)
 
     def __create_message(self, thread_id: str, sender: str, to: str, subject: str, message_text: str, reply_to: Optional[str] = None) -> Dict[str, str]:
         """
@@ -230,6 +235,19 @@ class Gmail:
 
     def __send_message(self, message: Dict[str, str]) -> None:
         self.proxy.send_message(message)
+
+    @staticmethod
+    def __read_multipart_mixed(payload: Dict[str, Any]) -> Message:
+        maybe_multipart_alternative = [
+            part for part in payload['parts'] if part['mimeType'] == 'multipart/alternative']
+        if len(maybe_multipart_alternative) > 0:
+            multipart_alternative = maybe_multipart_alternative[0]
+            assert isinstance(multipart_alternative, dict)
+            multipart_alternative['headers'] += payload['headers']
+            return Gmail.__read_multipart_alternative(multipart_alternative)
+        else:
+            raise ProtocolException(
+                'text/alternative MIME part missing within text/mixed')
 
     @staticmethod
     def __read_multipart_alternative(payload: Dict[str, Any]) -> Message:
